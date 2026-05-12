@@ -1,0 +1,8 @@
+node_modules/
+crawler/node_modules/
+docs_dataset/
+*.log
+.wdio-logs/
+.*/
+!.github/
+!.github/**

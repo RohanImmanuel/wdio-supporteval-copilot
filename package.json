@@ -1,0 +1,9 @@
+{
+  "name": "wdio-supporteval-copilot",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "crawl:wdio": "npm --prefix crawler run crawl:wdio",
+    "test:crawler": "npm --prefix crawler test"
+  }
+}
