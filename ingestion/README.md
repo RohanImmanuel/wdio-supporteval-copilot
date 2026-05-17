@@ -78,9 +78,9 @@ Sections over `MAX_TOKENS` (1,000) go through a three-tier split:
 
 ```mermaid
 flowchart TD
-    A[section body] --> B["split on \\n\\n (paragraphs)"]
+    A[section body] --> B["split on paragraphs"]
     B --> C{paragraph > MAX_TOKENS?}
-    C -- yes --> D["split on \\n (lines)"]
+    C -- yes --> D["split on new line"]
     C -- no --> E[greedy fill to TARGET_TOKENS]
     D --> F{line > MAX_TOKENS?}
     F -- yes --> G[character split at word boundaries]
