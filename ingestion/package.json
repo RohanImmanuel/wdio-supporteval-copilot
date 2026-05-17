@@ -1,0 +1,19 @@
+{
+  "name": "ingestion",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "chunk:docs": "tsx src/chunker/chunkDocs.ts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "gray-matter": "^4.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.19.4",
+    "typescript": "^5.4.0",
+    "vitest": "^3.2.0"
+  }
+}
