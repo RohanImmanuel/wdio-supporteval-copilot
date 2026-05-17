@@ -4,6 +4,8 @@
   "private": true,
   "scripts": {
     "crawl:wdio": "npm --prefix crawler run crawl:wdio",
-    "test:crawler": "npm --prefix crawler test"
+    "test:crawler": "npm --prefix crawler test",
+    "chunk:docs": "npm --prefix ingestion run chunk:docs",
+    "test:ingestion": "npm --prefix ingestion test"
   }
 }
