@@ -65,11 +65,11 @@ Sections under `MIN_TOKENS` (150) are merged forward into the next section as lo
 
 ```mermaid
 flowchart LR
-    S1["§ tiny (80 tok)"] --> M{merged < 600?}
-    S2["§ small (120 tok)"] --> M
-    M -- yes --> R["§ merged (200 tok)"]
-    S3["§ large (700 tok)"] --> M2{merged < 600?}
-    M2 -- no --> R2["§ large stays (700 tok)"]
+    S1["section: tiny (80 tok)"] --> M{merged < 600?}
+    S2["section: small (120 tok)"] --> M
+    M -- yes --> R["section: merged (200 tok)"]
+    S3["section: large (700 tok)"] --> M2{merged < 600?}
+    M2 -- no --> R2["section: large stays (700 tok)"]
 ```
 
 ### Stage 4: Split large sections
