@@ -4,6 +4,7 @@ import {
   VECTORS_FILE,
   MANIFEST_FILE,
   EMBEDDING_MODEL,
+  BATCH_SIZE,
   REQUEST_DELAY_MS,
   MAX_RETRIES,
   BACKOFF_MS,
@@ -18,6 +19,37 @@ import { dedupeVectors } from './dedupeVectors'
 import { buildVectorManifest, saveVectorManifest } from './vectorManifest'
 import { withRetry } from './retry'
 import { VectorRecord } from './types'
+
+async function countdown(ms: number): Promise<void> {
+  let remaining = Math.ceil(ms / 1000)
+  while (remaining > 0) {
+    process.stdout.write(`\r  Next batch in ${remaining}s...   `)
+    await new Promise(r => setTimeout(r, 1000))
+    remaining--
+  }
+  process.stdout.write('\r' + ' '.repeat(30) + '\r')
+}
+
+function saveProgress(
+  chunks: { length: number },
+  reusedFromCacheCount: number,
+  newlyEmbedded: number,
+  embeddingDimension: number,
+  existingVectors: { embedding: number[] }[],
+  status: 'complete' | 'partial'
+) {
+  dedupeVectors(VECTORS_FILE)
+  const dim = embeddingDimension || (existingVectors[0]?.embedding.length ?? 0)
+  const manifest = buildVectorManifest({
+    chunkCount: chunks.length,
+    vectorCount: reusedFromCacheCount + newlyEmbedded,
+    reusedFromCache: reusedFromCacheCount,
+    newlyEmbedded,
+    embeddingDimension: dim,
+    status,
+  })
+  saveVectorManifest(manifest)
+}
 
 async function main() {
   // 1. Check GEMINI_API_KEY
@@ -54,96 +86,76 @@ async function main() {
   let newlyEmbedded = 0
   let embeddingDimension = 0
 
-  // Write cached records first (only those not already in the file)
-  // Since we're appending, existing vectors file already has them — we'll dedupe at end
+  process.on('SIGINT', () => {
+    process.stdout.write('\n')
+    console.log('Interrupted. Saving progress...')
+    saveProgress(chunks, reusedFromCacheCount, newlyEmbedded, embeddingDimension, existingVectors, 'partial')
+    console.log('Progress saved. Rerun npm run embed:docs to continue.')
+    process.exit(0)
+  })
 
-  // 4. For each chunk: check cache → embed → appendVectorRecord
-  for (const chunk of chunks) {
-    const cached = getCached(cache, chunk, EMBEDDING_MODEL)
-    if (cached) {
-      // Already in file, skip
-      continue
-    }
+  // 4. Process uncached chunks in batches
+  for (let i = 0; i < toEmbed.length; i += BATCH_SIZE) {
+    const batch = toEmbed.slice(i, i + BATCH_SIZE)
+    const batchLabel = `batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(toEmbed.length / BATCH_SIZE)}`
+    const texts = batch.map(buildEmbeddingInput)
 
-    const text = buildEmbeddingInput(chunk)
-
-    let embedding: number[]
+    let embeddings: number[][]
     try {
-      embedding = await withRetry(
-        () => client.embed(text),
-        chunk.chunk_id,
+      embeddings = await withRetry(
+        () => client.embedBatch(texts),
+        batchLabel,
         MAX_RETRIES,
         BACKOFF_MS
       )
     } catch (err) {
-      console.log(`Failed after ${MAX_RETRIES} retries: ${chunk.chunk_id}`)
+      console.log(`Failed after ${MAX_RETRIES} retries: ${batchLabel}`)
       console.log('Progress saved. Rerun npm run embed:docs to continue.')
 
-      // Write partial manifest
-      const manifest = buildVectorManifest({
-        chunkCount: chunks.length,
-        vectorCount: newlyEmbedded + reusedFromCacheCount,
-        reusedFromCache: reusedFromCacheCount,
-        newlyEmbedded,
-        embeddingDimension,
-        status: 'partial',
-      })
-      saveVectorManifest(manifest)
+      saveProgress(chunks, reusedFromCacheCount, newlyEmbedded, embeddingDimension, existingVectors, 'partial')
       return
     }
 
-    if (embeddingDimension === 0) {
-      embeddingDimension = embedding.length
+    for (let j = 0; j < batch.length; j++) {
+      const chunk = batch[j]
+      const embedding = embeddings[j]
+
+      if (embeddingDimension === 0) {
+        embeddingDimension = embedding.length
+      }
+
+      const record: VectorRecord = {
+        chunk_id: chunk.chunk_id,
+        doc_id: chunk.doc_id,
+        title: chunk.title,
+        url: chunk.url,
+        heading_path: chunk.heading_path,
+        content: chunk.content,
+        token_count: chunk.token_count,
+        content_hash: chunk.content_hash,
+        crawled_at: chunk.crawled_at,
+        chunk_index: chunk.chunk_index,
+        embedding_model: EMBEDDING_MODEL,
+        embedding,
+        metadata: { source: 'webdriverio' },
+      }
+
+      appendVectorRecord(VECTORS_FILE, record)
+      newlyEmbedded++
     }
 
-    const record: VectorRecord = {
-      chunk_id: chunk.chunk_id,
-      doc_id: chunk.doc_id,
-      title: chunk.title,
-      url: chunk.url,
-      heading_path: chunk.heading_path,
-      content: chunk.content,
-      token_count: chunk.token_count,
-      content_hash: chunk.content_hash,
-      crawled_at: chunk.crawled_at,
-      chunk_index: chunk.chunk_index,
-      embedding_model: EMBEDDING_MODEL,
-      embedding,
-      metadata: { source: 'webdriverio' },
-    }
+    const totalEmbedded = reusedFromCacheCount + newlyEmbedded
+    const pct = ((totalEmbedded / chunks.length) * 100).toFixed(1)
+    console.log(`Embedded ${batchLabel} (${totalEmbedded}/${chunks.length} chunks, ${pct}%)`)
 
-    appendVectorRecord(VECTORS_FILE, record)
-    console.log(`Embedded: ${chunk.chunk_id}`)
-    newlyEmbedded++
-
-    // Rate limit delay
-    if (REQUEST_DELAY_MS > 0) {
-      await new Promise((r) => setTimeout(r, REQUEST_DELAY_MS))
+    if (i + BATCH_SIZE < toEmbed.length && REQUEST_DELAY_MS > 0) {
+      await countdown(REQUEST_DELAY_MS)
     }
   }
 
-  // 5. Deduplicate vectors.jsonl
-  dedupeVectors(VECTORS_FILE)
-
-  // Recalculate embedding dimension from existing vectors if we didn't embed any new ones
-  if (embeddingDimension === 0 && existingVectors.length > 0) {
-    embeddingDimension = existingVectors[0].embedding.length
-  }
+  saveProgress(chunks, reusedFromCacheCount, newlyEmbedded, embeddingDimension, existingVectors, 'complete')
 
   const vectorCount = reusedFromCacheCount + newlyEmbedded
-
-  // 6. Write manifest
-  const manifest = buildVectorManifest({
-    chunkCount: chunks.length,
-    vectorCount,
-    reusedFromCache: reusedFromCacheCount,
-    newlyEmbedded,
-    embeddingDimension,
-    status: 'complete',
-  })
-  saveVectorManifest(manifest)
-
-  // 7. Print summary
   console.log('Embedding complete')
   console.log(`Vectors written: ${vectorCount}`)
   console.log(`Newly embedded: ${newlyEmbedded}`)

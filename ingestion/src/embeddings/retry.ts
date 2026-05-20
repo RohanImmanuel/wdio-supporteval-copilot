@@ -1,3 +1,13 @@
+async function countdown(ms: number, prefix: string): Promise<void> {
+  let remaining = Math.ceil(ms / 1000)
+  while (remaining > 0) {
+    process.stdout.write(`\r  ${prefix} ${remaining}s...   `)
+    await new Promise(r => setTimeout(r, 1000))
+    remaining--
+  }
+  process.stdout.write('\r' + ' '.repeat(40) + '\r')
+}
+
 export async function withRetry<T>(
   fn: () => Promise<T>,
   label: string,
@@ -24,7 +34,7 @@ export async function withRetry<T>(
         const delay = backoffMs[attempt] ?? backoffMs[backoffMs.length - 1]
         const delaySec = Math.round(delay / 1000)
         console.log(`Retrying in ${delaySec}s... (attempt ${attempt + 1}/${maxRetries})`)
-        await new Promise((r) => setTimeout(r, delay))
+        await countdown(delay, `Retrying in`)
       }
     }
   }

@@ -5,9 +5,13 @@ export function createGeminiClient(apiKey: string) {
   const genAI = new GoogleGenerativeAI(apiKey)
   const model = genAI.getGenerativeModel({ model: EMBEDDING_MODEL })
   return {
-    async embed(text: string): Promise<number[]> {
-      const result = await model.embedContent(text)
-      return result.embedding.values
+    async embedBatch(texts: string[]): Promise<number[][]> {
+      const result = await model.batchEmbedContents({
+        requests: texts.map(text => ({
+          content: { role: 'user', parts: [{ text }] },
+        })),
+      })
+      return result.embeddings.map(e => e.values)
     },
   }
 }

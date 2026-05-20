@@ -163,7 +163,7 @@ flowchart TD
     D --> E{cached?}
     E -- yes --> F[reuse vector]
     E -- no --> G[buildEmbeddingInput]
-    G --> H[Gemini embedContent]
+    G --> H[Gemini batchEmbedContents]
     H --> I[appendVectorRecord]
     F --> J[dedupeVectors]
     I --> J
@@ -198,24 +198,26 @@ flowchart LR
 
 On rerun, every chunk whose `content_hash` already exists in `vectors.jsonl` for the same model is skipped. If a chunk's content changes between crawler runs, its hash changes and it is re-embedded automatically.
 
-### Rate limit handling
+### Batching
+
+Chunks are sent in batches of `BATCH_SIZE` (100) using `batchEmbedContents`. The free tier counts each item in the batch against the RPM quota, not each API call. With 100 chunks per batch and a 100 RPM limit, one batch consumes the full minute's quota:
+
+| | Without batching | With batching (100) |
+|---|---|---|
+| API calls for 2,333 chunks | 2,333 | 24 |
+| Delay needed | 600ms | 65s |
+| Total time | ~25 min | ~26 min |
+
+The throughput is the same, batching reduces call overhead not total time.
 
 | Setting | Value |
 |---|---|
-| `REQUEST_DELAY_MS` | 500ms between requests |
+| `BATCH_SIZE` | 100 chunks per request |
+| `REQUEST_DELAY_MS` | 65s between batches |
 | `MAX_RETRIES` | 3 |
-| Backoff schedule | 5s → 15s → 30s |
+| Backoff schedule | 20s, 45s, 90s |
 
-On a permanent failure after all retries, progress is saved and the process exits cleanly:
-
-```
-Rate limit hit for configuration-capabilities-0001
-Retrying in 5s... (attempt 1/3)
-Retrying in 15s... (attempt 2/3)
-Retrying in 30s... (attempt 3/3)
-Failed after 3 retries: configuration-capabilities-0001
-Progress saved. Rerun npm run embed:docs to continue.
-```
+The 90s final backoff guarantees the 60s window has fully reset before the last retry. On permanent failure progress is saved and the process exits cleanly.
 
 ### Deduplication
 
@@ -235,7 +237,7 @@ interface VectorRecord {
   content_hash:    string    // SHA-256 hex
   crawled_at:      string    // ISO timestamp
   chunk_index:     number    // 0-based within doc
-  embedding_model: string    // "gemini-embedding-001"
+  embedding_model: string    // "gemini-embedding-2"
   embedding:       number[]  // 3072-dimensional vector
   metadata:        { source: 'webdriverio' }
 }
@@ -245,7 +247,8 @@ interface VectorRecord {
 
 | Constant | Value |
 |---|---|
-| `EMBEDDING_MODEL` | `gemini-embedding-001` |
-| `REQUEST_DELAY_MS` | 500 |
+| `EMBEDDING_MODEL` | `gemini-embedding-2` |
+| `BATCH_SIZE` | 100 |
+| `REQUEST_DELAY_MS` | 65000 |
 | `MAX_RETRIES` | 3 |
-| `BACKOFF_MS` | [5000, 15000, 30000] |
+| `BACKOFF_MS` | [20000, 45000, 90000] |

@@ -18,7 +18,7 @@ describe('buildVectorManifest', () => {
     expect(manifest.newly_embedded).toBe(2247)
     expect(manifest.embedding_dimension).toBe(768)
     expect(manifest.status).toBe('complete')
-    expect(manifest.embedding_model).toBe('gemini-embedding-001')
+    expect(manifest.embedding_model).toBe('gemini-embedding-2')
     expect(typeof manifest.generated_at).toBe('string')
     expect(typeof manifest.input_file).toBe('string')
     expect(typeof manifest.output_file).toBe('string')
