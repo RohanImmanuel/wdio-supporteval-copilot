@@ -5,9 +5,11 @@
   "type": "commonjs",
   "scripts": {
     "chunk:docs": "tsx src/chunker/chunkDocs.ts",
+    "embed:docs": "tsx src/embeddings/embedDocs.ts",
     "test": "vitest run"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.0",
     "gray-matter": "^4.0.3"
   },
   "devDependencies": {

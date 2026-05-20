@@ -1,28 +1,37 @@
 # Ingestion
 
-Reads the crawled WebdriverIO docs from `docs_dataset/markdown/` and produces token-bounded chunks ready for embedding.
+Two-stage pipeline that converts crawled WebdriverIO docs into Gemini embedding vectors for RAG retrieval.
+
+**Stage 1 (Chunker)**: splits markdown docs into token-bounded sections.
+
+**Stage 2 (Embedder)**: uses Gemini to embed each chunk.
 
 ## What it produces
 
 | File | Description |
 |---|---|
-| `docs_dataset/chunks/chunks.jsonl` | One JSON object per line, each a chunk |
-| `docs_dataset/chunks/chunk_manifest.json` | Run stats: total chunks, docs, token distribution |
+| `docs_dataset/chunks/chunks.jsonl` | JSONL file containing the chunks |
+| `docs_dataset/chunks/chunk_manifest.json` | Chunker run stats |
+| `docs_dataset/vectors/vectors.jsonl` | JSONL file containing the vector records |
+| `docs_dataset/vectors/vector_manifest.json` | Embedder run stats |
 
-My current run is: **2,333 chunks** from **348 docs**, avg **380 tokens/chunk**, max **1,063 tokens**.
+My current chunker output: **2,333 chunks** from **348 docs**, avg **380 tokens/chunk**, max **1,063 tokens**.
 
 ## How to run
 
-Run the crawler first as it tequires `docs_dataset/markdown/`
+Run the crawler first, this requires `docs_dataset/markdown/`.
 
 ```bash
-# Install dependencies 
+# Install dependencies
 npm install
 
-# To run
+# Stage 1: chunk the markdown docs
 npm run chunk:docs
 
-# To tests
+# Stage 2: embed the chunks (update the GEMINI_API_KEY)
+GEMINI_API_KEY=your_key npm run embed:docs
+
+# Tests
 npm test
 ```
 
@@ -98,7 +107,7 @@ flowchart TD
 
 **Overlap**: each sub-chunk after the first gets up to `OVERLAP_TOKENS` (100) of trailing text from the previous sub-chunk. Paragraphs that individually exceed OVERLAP_TOKENS are skipped to prevent overflow.
 
-### Stage 5 — IDs and hashes
+### Stage 5: IDs and hashes
 
 ```
 chunk_id = {doc_id}-{slugified_heading_path}-{padded_index}
@@ -138,3 +147,105 @@ interface Chunk {
 | `MAX_TOKENS` | 1000 | Hard ceiling; triggers splitting above this |
 | `OVERLAP_TOKENS` | 100 | Max overlap prepended to continuation sub-chunks |
 
+---
+
+## Stage 2: Embedder
+
+Reads `chunks.jsonl`, calls the Gemini embedding API and writes `vectors.jsonl`. Safe to interrupt and resume as already embedded chunks are skipped on rerun.
+
+### Pipeline
+
+```mermaid
+flowchart TD
+    A[chunks.jsonl] --> B[readChunks + validate]
+    B --> C[readExistingVectors]
+    C --> D[buildCache]
+    D --> E{cached?}
+    E -- yes --> F[reuse vector]
+    E -- no --> G[buildEmbeddingInput]
+    G --> H[Gemini embedContent]
+    H --> I[appendVectorRecord]
+    F --> J[dedupeVectors]
+    I --> J
+    J --> K[vectors.jsonl]
+    J --> L[vector_manifest.json]
+```
+
+### Embedding input format
+
+Raw chunk content is not sent directly. Each request is prefixed with structured context so the model understands what the text is about:
+
+```
+Title: Configuration File | WebdriverIO
+Section: Configuration File > Example Configuration
+Source: https://webdriver.io/docs/configurationfile/
+
+The configuration file contains all necessary information...
+```
+
+`buildEmbeddingInput` strips the `#` prefix from `heading_path` segments and converts the ` | ` separator to ` > `.
+
+### Resume and caching
+
+Cache key: `content_hash::embedding_model`
+
+```mermaid
+flowchart LR
+    A[chunk] --> B{same content_hash\n+ same model\nin vectors.jsonl?}
+    B -- yes --> C[skip Gemini call]
+    B -- no --> D[embed + append]
+```
+
+On rerun, every chunk whose `content_hash` already exists in `vectors.jsonl` for the same model is skipped. If a chunk's content changes between crawler runs, its hash changes and it is re-embedded automatically.
+
+### Rate limit handling
+
+| Setting | Value |
+|---|---|
+| `REQUEST_DELAY_MS` | 500ms between requests |
+| `MAX_RETRIES` | 3 |
+| Backoff schedule | 5s → 15s → 30s |
+
+On a permanent failure after all retries, progress is saved and the process exits cleanly:
+
+```
+Rate limit hit for configuration-capabilities-0001
+Retrying in 5s... (attempt 1/3)
+Retrying in 15s... (attempt 2/3)
+Retrying in 30s... (attempt 3/3)
+Failed after 3 retries: configuration-capabilities-0001
+Progress saved. Rerun npm run embed:docs to continue.
+```
+
+### Deduplication
+
+Because vectors are appended incrementally, a rerun after partial failure will produce duplicate lines for any chunk that was embedded in a previous run and again in the new run. After all chunks are processed, `dedupeVectors` rewrites the file keeping the last record per `chunk_id + content_hash + embedding_model`.
+
+### Vector record schema
+
+```typescript
+interface VectorRecord {
+  chunk_id:        string    // "api-browser-geolocation-getgeolocation-0003"
+  doc_id:          string    // "api-browser-geolocation"
+  title:           string    // page title
+  url:             string    // canonical URL
+  heading_path:    string    // "## Browser | ### getGeoLocation"
+  content:         string    // chunk body
+  token_count:     number
+  content_hash:    string    // SHA-256 hex
+  crawled_at:      string    // ISO timestamp
+  chunk_index:     number    // 0-based within doc
+  embedding_model: string    // "gemini-embedding-001"
+  embedding:       number[]  // 3072-dimensional vector
+  metadata:        { source: 'webdriverio' }
+}
+```
+
+### Embedding constants
+
+| Constant | Value |
+|---|---|
+| `EMBEDDING_MODEL` | `gemini-embedding-001` |
+| `REQUEST_DELAY_MS` | 500 |
+| `MAX_RETRIES` | 3 |
+| `BACKOFF_MS` | [5000, 15000, 30000] |

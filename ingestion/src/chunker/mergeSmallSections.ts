@@ -20,7 +20,7 @@ export function mergeSmallSections(sections: Section[]): Section[] {
 
     // If buffer is small and merging would stay under TARGET_TOKENS, merge
     if (bufferTokens < MIN_TOKENS) {
-      const mergedBody = buffer.body
+      const mergedBody: string = buffer.body
         ? buffer.body + '\n\n' + section.body
         : section.body
       const mergedTokens = countTokens(mergedBody)

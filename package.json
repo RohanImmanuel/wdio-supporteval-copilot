@@ -6,6 +6,7 @@
     "crawl:wdio": "npm --prefix crawler run crawl:wdio",
     "test:crawler": "npm --prefix crawler test",
     "chunk:docs": "npm --prefix ingestion run chunk:docs",
+    "embed:docs": "npm --prefix ingestion run embed:docs",
     "test:ingestion": "npm --prefix ingestion test"
   }
 }
